@@ -4,6 +4,9 @@ const cors = require('cors');
 const multer = require('multer');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
+const connectDB = require('./config/db');
+connectDB();
+
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -77,7 +80,40 @@ app.post('/api/auth/verify-otp', (req, res) => {
         res.status(401).json({ error: 'Invalid OTP' });
     }
 });
+// Proof photo verification
+app.post('/api/verify-proof', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No image provided' });
 
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const base64Image = req.file.buffer.toString('base64');
+
+        const response = await model.generateContent([
+            {
+                inlineData: {
+                    mimeType: req.file.mimetype,
+                    data: base64Image,
+                },
+            },
+            `Look at this image. Does it show a medicine tablet, pill, capsule, liquid medicine, or injection being taken or held?
+            Return ONLY valid JSON:
+            {
+              "verified": true or false,
+              "confidence": "high" or "medium" or "low",
+              "message": "one line explanation"
+            }`,
+        ]);
+
+        const text = response.response.text();
+        const clean = text.replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(clean);
+        res.json(parsed);
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Verification failed' });
+    }
+});
 // ── Start ────────────────────────────────────────────
 app.listen(3000, '0.0.0.0', () => {
     console.log('Backend running on http://0.0.0.0:3000');
