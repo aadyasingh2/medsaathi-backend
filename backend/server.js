@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const twilio = require('twilio');
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const connectDB = require('./config/db');
 connectDB();
@@ -63,23 +65,37 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
     }
 });
 
-// OTP send (mock for now)
-app.post('/api/auth/send-otp', (req, res) => {
+const otpStore = {};
+
+app.post('/api/auth/send-otp', async (req, res) => {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ error: 'Phone required' });
-    console.log(`OTP sent to ${phone}: 123456`);
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    otpStore[phone] = { otp, expiresAt: Date.now() + 5 * 60 * 1000 };
+
+    await twilioClient.messages.create({
+        body: `Your MedSaathi OTP is: ${otp}. Valid for 5 minutes.`,
+        from: process.env.TWILIO_PHONE,
+        to: `+91${phone.replace(/\s/g, '')}`,
+    });
+
+    console.log(`OTP sent to ${phone}: ${otp}`);
     res.json({ success: true, message: 'OTP sent' });
 });
 
-// OTP verify (mock for now)
 app.post('/api/auth/verify-otp', (req, res) => {
     const { phone, otp } = req.body;
-    if (otp === '123456') {
-        res.json({ success: true, token: 'mock-token-' + phone });
-    } else {
-        res.status(401).json({ error: 'Invalid OTP' });
-    }
+    const record = otpStore[phone];
+
+    if (!record) return res.status(400).json({ error: 'No OTP found for this number' });
+    if (Date.now() > record.expiresAt) return res.status(400).json({ error: 'OTP expired' });
+    if (record.otp !== otp) return res.status(401).json({ error: 'Invalid OTP' });
+
+    delete otpStore[phone];
+    res.json({ success: true, token: 'token-' + phone });
 });
+
 // Proof photo verification
 app.post('/api/verify-proof', upload.single('image'), async (req, res) => {
     try {
