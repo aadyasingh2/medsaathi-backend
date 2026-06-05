@@ -1,10 +1,12 @@
 const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema({
-    phone: String,
+    phone: { type: String, required: true, unique: true },
     name: String,
-    age: Number,
-    disease: String,
+    language: String,
+    caregiverName: String,
+    caregiverPhone: String,
+    createdAt: { type: Date, default: Date.now },
 });
 
 module.exports = mongoose.model("User", userSchema);

@@ -3,10 +3,10 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const twilio = require('twilio');
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const connectDB = require('./config/db');
+const User = require('./models/User');
+
 connectDB();
 
 const app = express();
@@ -16,9 +16,32 @@ app.use(cors());
 app.use(express.json());
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const otpStore = {};
+
+function parseJsonResponse(text) {
+    const clean = String(text || '').replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+}
 
 // ── Routes ──────────────────────────────────────────
 
+app.post('/api/auth/register', async (req, res) => {
+    const { name, phone, language, caregiverName, caregiverPhone } = req.body;
+    try {
+        let user = await User.findOne({ phone });
+        if (user) {
+            user.name = name;
+            user.caregiverName = caregiverName;
+            user.caregiverPhone = caregiverPhone;
+            await user.save();
+        } else {
+            user = await User.create({ name, phone, language, caregiverName, caregiverPhone });
+        }
+        res.json({ success: true, user });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 // Health check
 app.get('/', (req, res) => {
     res.json({ status: 'MedSaathi backend running' });
@@ -29,7 +52,7 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No image provided' });
 
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         const base64Image = req.file.buffer.toString('base64');
 
         const response = await model.generateContent([
@@ -54,8 +77,7 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
         ]);
 
         const text = response.response.text();
-        const clean = text.replace(/```json|```/g, '').trim();
-        const parsed = JSON.parse(clean);
+        const parsed = parseJsonResponse(text);
 
         res.json(parsed);
 
@@ -65,23 +87,15 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
     }
 });
 
-const otpStore = {};
-
-app.post('/api/auth/send-otp', async (req, res) => {
+app.post('/api/auth/send-otp', (req, res) => {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ error: 'Phone required' });
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = '123456';
     otpStore[phone] = { otp, expiresAt: Date.now() + 5 * 60 * 1000 };
 
-    await twilioClient.messages.create({
-        body: `Your MedSaathi OTP is: ${otp}. Valid for 5 minutes.`,
-        from: process.env.TWILIO_PHONE,
-        to: `+91${phone.replace(/\s/g, '')}`,
-    });
-
-    console.log(`OTP sent to ${phone}: ${otp}`);
-    res.json({ success: true, message: 'OTP sent' });
+    console.log(`Mock OTP for ${phone}: ${otp}`);
+    res.json({ success: true, message: 'OTP sent', demoOtp: otp });
 });
 
 app.post('/api/auth/verify-otp', (req, res) => {
@@ -121,8 +135,7 @@ app.post('/api/verify-proof', upload.single('image'), async (req, res) => {
         ]);
 
         const text = response.response.text();
-        const clean = text.replace(/```json|```/g, '').trim();
-        const parsed = JSON.parse(clean);
+        const parsed = parseJsonResponse(text);
         res.json(parsed);
 
     } catch (err) {
